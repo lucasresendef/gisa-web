@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: 'Sora', sans-serif;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(124, 196, 255, 0.55), transparent 42%),
+    radial-gradient(circle at 88% 4%, rgba(165, 213, 255, 0.5), transparent 38%),
+    radial-gradient(circle at 50% 100%, rgba(191, 221, 253, 0.45), transparent 45%),
+    #eef5ff;
+  transition:
+    background 0.8s ease,
+    color 0.6s ease;
+}
+
+html.dark body {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(37, 112, 224, 0.32), transparent 45%),
+    radial-gradient(circle at 88% 4%, rgba(31, 89, 196, 0.28), transparent 40%),
+    radial-gradient(circle at 50% 100%, rgba(59, 138, 240, 0.22), transparent 48%),
+    #060c1c;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
