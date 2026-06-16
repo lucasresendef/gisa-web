@@ -15,7 +15,7 @@ export const devices: Device[] = [
   { id: 'R8', label: 'Cozinha', kind: 'relay', roomId: 'kitchen', command: 'R8', icon: 'lightbulb' },
   { id: 'R7', label: 'Corredor Cozinha', kind: 'relay', roomId: 'kitchen', command: 'R7', icon: 'lightbulb' },
 
-  { id: 'R6', label: 'Anicézio e Gislaine', kind: 'relay', roomId: 'bedroom', command: 'R6', icon: 'lightbulb' },
+  { id: 'R6', label: 'Quarto Anicézio e Gislaine', kind: 'relay', roomId: 'bedroom', command: 'R6', icon: 'lightbulb' },
   { id: 'R1', label: 'Quarto Noah', kind: 'relay', roomId: 'bedroom', command: 'R1', icon: 'lightbulb' },
   { id: 'R4', label: 'Quarto Sara', kind: 'relay', roomId: 'bedroom', command: 'R4', icon: 'lightbulb' },
   { id: 'R9', label: 'Luminária Sara', kind: 'relay', roomId: 'bedroom', command: 'R9', icon: 'lamp' },

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { createPortal } from 'react-dom';
 import { Check, Delete, Lock, ShieldCheck, X } from 'lucide-react';
 import type { Device } from '../../../types/device';
 
@@ -85,7 +86,7 @@ export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: Gate
         ? 'bg-emerald-500'
         : 'bg-brand-500';
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {gate && (
         <motion.div
@@ -245,6 +246,7 @@ export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: Gate
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 };

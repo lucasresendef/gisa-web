@@ -6,15 +6,17 @@ import type { DeviceState, MqttConnectionStatus } from '../types/device';
 interface HomeAutomationState {
   mqttStatus: MqttConnectionStatus;
   mqttError?: string;
+  syncReceived: boolean;
   deviceStates: Record<string, DeviceState>;
   connect: () => void;
   disconnect: () => void;
   toggleDevice: (command: string) => void;
   pulseGate: (command: string) => void;
+  sync: () => void;
 }
 
 const defaultDeviceStates = Object.fromEntries(
-  devices.map((device) => [device.id, 'loading']),
+  devices.map((device) => [device.id, device.kind === 'gate' ? 'off' : 'loading']),
 ) as Record<string, DeviceState>;
 
 let listenersBound = false;
@@ -23,11 +25,12 @@ const GATE_OPEN_MS = 6000;
 
 export const useHomeAutomationStore = create<HomeAutomationState>((set) => ({
   mqttStatus: 'disconnected',
+  syncReceived: false,
   deviceStates: defaultDeviceStates,
   connect: () => {
     if (!listenersBound) {
       mqttService.onConnection((status, error) => {
-        set({ mqttStatus: status, mqttError: error });
+        set({ mqttStatus: status, mqttError: error, syncReceived: false });
         if (status === 'connected') {
           mqttService.publishCommand(initialSyncCommand);
         }
@@ -39,7 +42,7 @@ export const useHomeAutomationStore = create<HomeAutomationState>((set) => ({
           Object.entries(updates).forEach(([id, value]) => {
             next[id] = value === 'true' ? 'on' : 'off';
           });
-          return { deviceStates: next };
+          return { deviceStates: next, syncReceived: true };
         });
       });
 
@@ -76,5 +79,9 @@ export const useHomeAutomationStore = create<HomeAutomationState>((set) => ({
         deviceStates: { ...state.deviceStates, [command]: 'off' },
       }));
     }, GATE_OPEN_MS);
+  },
+  sync: () => {
+    set({ syncReceived: false });
+    mqttService.publishCommand(initialSyncCommand);
   },
 }));

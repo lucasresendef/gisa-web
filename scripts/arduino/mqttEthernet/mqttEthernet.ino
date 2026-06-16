@@ -13,9 +13,9 @@
 #endif
 
 byte mac[] = { 0x70, 0xB3, 0xD5, 0x0A, 0xCC, 0xFB };
-IPAddress ip(192, 168, 100, 78);
-IPAddress dnsServer(192, 168, 100, 1);
-IPAddress gateway(192, 168, 100, 1);
+IPAddress ip(192, 168, 1, 12);
+IPAddress dnsServer(192, 168, 1, 1);
+IPAddress gateway(192, 168, 1, 1);
 IPAddress subnet(255, 255, 255, 0);
 
 const char *MQTT_BROKER = "broker.emqx.io";

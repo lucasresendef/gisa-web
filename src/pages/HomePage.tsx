@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Lightbulb, LightbulbOff, Mic, Power, Fence } from 'lucide-react';
 import { devices, devicesByRoom, gatePassword, rooms } from '../config/homeConfig';
@@ -10,8 +10,9 @@ import { useWeather } from '../hooks/useWeather';
 import { matchSmallTalk, parseVoiceCommand, type VoiceFeedback } from '../config/voiceCommands';
 import type { Device, DeviceState } from '../types/device';
 
+const importVoiceAssistant = () => import('../features/voice/components/VoiceAssistant');
 const VoiceAssistant = lazy(() =>
-  import('../features/voice/components/VoiceAssistant').then((m) => ({ default: m.VoiceAssistant })),
+  importVoiceAssistant().then((m) => ({ default: m.VoiceAssistant })),
 );
 const GatePasswordDialog = lazy(() =>
   import('../features/devices/components/GatePasswordDialog').then((m) => ({
@@ -25,6 +26,10 @@ const greeting = () => {
   if (hour >= 12 && hour < 18) return 'Boa tarde';
   return 'Boa noite';
 };
+
+const MASCULINE_LABELS = ['quarto', 'corredor', 'portão', 'portao'];
+const isMasculineLabel = (label: string) =>
+  MASCULINE_LABELS.includes(label.toLowerCase().split(' ')[0]);
 
 const gridVariants = {
   hidden: { opacity: 0 },
@@ -58,6 +63,13 @@ export const HomePage = () => {
     setVoiceMounted(true);
     setVoiceOpen(true);
   };
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      void importVoiceAssistant();
+    }, 800);
+    return () => window.clearTimeout(id);
+  }, []);
 
   const requestActivate = (device: Device) => {
     if (device.kind === 'gate') {
@@ -127,25 +139,30 @@ export const HomePage = () => {
     }
 
     const current = stateOf(device.id);
+    const masculine = isMasculineLabel(device.label);
+    const art = masculine ? 'o' : 'a';
+    const Art = masculine ? 'O' : 'A';
+    const on = masculine ? 'ligado' : 'ligada';
+    const off = masculine ? 'desligado' : 'desligada';
 
     if (intent.action === 'off') {
       if (current === 'on') {
         toggleDevice(device.command);
-        return { status: 'success', message: `Desliguei a ${device.label}.` };
+        return { status: 'success', message: `Desliguei ${art} ${device.label}.` };
       }
-      return { status: 'info', message: `A ${device.label} já está desligada.` };
+      return { status: 'info', message: `${Art} ${device.label} já está ${off}.` };
     }
 
     if (intent.action === 'toggle') {
       toggleDevice(device.command);
-      return { status: 'success', message: `Alternei a ${device.label}.` };
+      return { status: 'success', message: `Alternei ${art} ${device.label}.` };
     }
 
     if (current !== 'on') {
       toggleDevice(device.command);
-      return { status: 'success', message: `Liguei a ${device.label}.` };
+      return { status: 'success', message: `Liguei ${art} ${device.label}.` };
     }
-    return { status: 'info', message: `A ${device.label} já está ligada.` };
+    return { status: 'info', message: `${Art} ${device.label} já está ${on}.` };
   };
 
   const stats = [
@@ -209,6 +226,7 @@ export const HomePage = () => {
               type="button"
               whileHover={{ y: -2 }}
               whileTap={{ scale: 0.96 }}
+              onPointerDown={() => void importVoiceAssistant()}
               onClick={openVoiceAssistant}
               className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-400 to-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-soft transition"
             >

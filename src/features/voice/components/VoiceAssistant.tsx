@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { createPortal } from 'react-dom';
 import { Loader2, Mic, MicOff, Sparkles, X } from 'lucide-react';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { exampleCommands, type VoiceFeedback } from '../../../config/voiceCommands';
@@ -38,6 +39,15 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
   const secureContext = typeof window !== 'undefined' && window.isSecureContext;
   const supported = browserSupportsSpeechRecognition && secureContext;
 
+  const beginListening = useCallback(() => {
+    setFeedback(null);
+    processedRef.current = false;
+    resetTranscript();
+    stopSpeaking();
+    setPhase('listening');
+    SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
+  }, [resetTranscript]);
+
   const finish = useCallback(
     (text: string) => {
       if (processedRef.current) return;
@@ -66,15 +76,10 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
       return;
     }
 
-    setPhase('intro');
-    speak('Olá, eu sou a Gisa.');
-    const timer = window.setTimeout(() => {
-      setPhase('listening');
-      SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
-    }, 1600);
+    setPhase('listening');
+    SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
 
     return () => {
-      window.clearTimeout(timer);
       SpeechRecognition.abortListening();
       stopSpeaking();
     };
@@ -84,7 +89,7 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
     if (open && supported && !isMicrophoneAvailable) {
       setFeedback({
         status: 'error',
-        message: 'Preciso da permissão do microfone para te ouvir. Habilite e tente de novo.',
+        message: 'Não consegui acessar o microfone. Permita o acesso no navegador e toque de novo.',
       });
       setPhase('result');
     }
@@ -94,19 +99,12 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
     if (phase === 'listening' && finalTranscript) finish(finalTranscript);
   }, [phase, finalTranscript, finish]);
 
-  const retry = () => {
-    setFeedback(null);
-    processedRef.current = false;
-    resetTranscript();
-    stopSpeaking();
-    setPhase('listening');
-    SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
-  };
-
   const heard = interimTranscript || transcript;
   const accent = feedback ? accentByStatus[feedback.status] : 'from-brand-400 to-brand-600';
+  const orbClickable = phase === 'intro' || phase === 'listening' || phase === 'result';
+  const showRings = phase === 'intro' || phase === 'listening';
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -144,7 +142,7 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
             </button>
 
             <div className="relative mx-auto flex h-28 w-28 items-center justify-center">
-              {(phase === 'listening' || phase === 'intro') &&
+              {showRings &&
                 [0, 1, 2].map((i) => (
                   <motion.span
                     key={i}
@@ -155,8 +153,13 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
                   />
                 ))}
 
-              <motion.div
-                className={`relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br ${accent} text-white shadow-glow`}
+              <motion.button
+                type="button"
+                onClick={beginListening}
+                disabled={!orbClickable}
+                aria-label="Tocar para falar"
+                className={`relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br ${accent} text-white shadow-glow ${orbClickable ? 'cursor-pointer' : 'cursor-default'}`}
+                whileTap={orbClickable ? { scale: 0.92 } : undefined}
                 animate={
                   phase === 'listening'
                     ? { scale: [1, 1.08, 1] }
@@ -164,18 +167,18 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
                       ? { scale: [1, 1.04, 1] }
                       : { scale: 1 }
                 }
-                transition={{ duration: 1.4, repeat: phase === 'listening' || phase === 'intro' ? Infinity : 0 }}
+                transition={{ duration: 1.4, repeat: showRings ? Infinity : 0 }}
               >
                 {phase === 'processing' ? (
                   <Loader2 className="h-8 w-8 animate-spin" />
-                ) : phase === 'listening' ? (
-                  <Mic className="h-8 w-8" />
                 ) : phase === 'unsupported' ? (
                   <MicOff className="h-8 w-8" />
-                ) : (
+                ) : phase === 'result' && feedback?.status !== 'error' ? (
                   <Sparkles className="h-8 w-8" />
+                ) : (
+                  <Mic className="h-8 w-8" />
                 )}
-              </motion.div>
+              </motion.button>
             </div>
 
             <AnimatePresence mode="wait">
@@ -193,8 +196,8 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
                       Olá, eu sou a Gisa
                     </h2>
                     <p className="mx-auto mt-2 max-w-xs text-sm text-slate-500 dark:text-slate-400">
-                      O comando de voz precisa de uma conexão segura (HTTPS) ou localhost. No celular
-                      pelo IP da rede ele fica indisponível — funciona aqui no computador.
+                      Seu navegador não suporta reconhecimento de voz. Tente no Chrome (computador ou
+                      Android). No iPhone essa função ainda é instável.
                     </p>
                   </>
                 ) : phase === 'result' && feedback ? (
@@ -221,10 +224,10 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
                 ) : phase === 'listening' ? (
                   <>
                     <h2 className="font-display text-xl font-bold text-slate-800 dark:text-white">
-                      Estou ouvindo…
+                      {listening ? 'Estou ouvindo…' : 'Toque no microfone'}
                     </h2>
                     <p className="mt-2 min-h-5 text-sm font-medium text-brand-600 dark:text-brand-200">
-                      {heard || 'Pode falar 🎙️'}
+                      {heard || (listening ? 'Pode falar 🎙️' : 'Toque para falar de novo')}
                     </p>
                   </>
                 ) : (
@@ -233,7 +236,7 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
                       Olá, eu sou a Gisa
                     </h2>
                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                      O que posso fazer por você?
+                      Toque no microfone e fale o que precisa.
                     </p>
                   </>
                 )}
@@ -253,26 +256,27 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
               </div>
             )}
 
-            {phase === 'result' && supported && (
+            {(phase === 'intro' || phase === 'result') && supported && (
               <button
                 type="button"
-                onClick={retry}
+                onClick={beginListening}
                 className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-brand-400 to-brand-600 px-5 py-3 text-sm font-semibold text-white shadow-soft transition active:scale-95"
               >
                 <Mic className="h-4 w-4" />
-                Falar de novo
+                {phase === 'result' ? 'Falar de novo' : 'Falar'}
               </button>
             )}
 
             {phase === 'listening' && (
               <p className="mt-5 flex items-center justify-center gap-1.5 text-xs font-medium text-slate-400 dark:text-slate-500">
                 <span className={`h-2 w-2 rounded-full ${listening ? 'animate-pulse bg-rose-500' : 'bg-slate-300'}`} />
-                {listening ? 'Microfone ativo' : 'Microfone parado'}
+                {listening ? 'Microfone ativo' : 'Microfone parado — toque para falar'}
               </p>
             )}
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 };
