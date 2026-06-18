@@ -15,9 +15,10 @@ interface DeviceCardProps {
   device: Device;
   state: DeviceState;
   onActivate: (device: Device) => void;
+  disabled?: boolean;
 }
 
-export const DeviceCard = ({ device, state, onActivate }: DeviceCardProps) => {
+export const DeviceCard = ({ device, state, onActivate, disabled = false }: DeviceCardProps) => {
   const Icon = iconMap[device.icon];
   const isGate = device.kind === 'gate';
   const isOn = state === 'on';
@@ -28,11 +29,14 @@ export const DeviceCard = ({ device, state, onActivate }: DeviceCardProps) => {
     <motion.button
       type="button"
       layout
-      whileHover={{ y: -4 }}
-      whileTap={{ scale: 0.98 }}
+      disabled={disabled}
+      whileHover={disabled ? undefined : { y: -4 }}
+      whileTap={disabled ? undefined : { scale: 0.98 }}
       onClick={() => onActivate(device)}
       aria-label={`${isGate ? 'Acionar' : 'Alternar'} ${device.label}`}
       className={`group relative w-full overflow-hidden rounded-3xl border p-4 text-left backdrop-blur transition-colors duration-300 ${
+        disabled ? 'cursor-not-allowed opacity-50' : ''
+      } ${
         active
           ? 'border-brand-300/70 bg-gradient-to-br from-white via-brand-50 to-brand-100 shadow-glow dark:border-brand-400/40 dark:from-brand-500/20 dark:via-brand-500/10 dark:to-transparent'
           : 'border-white/70 bg-white/70 shadow-soft hover:border-brand-200 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/20'

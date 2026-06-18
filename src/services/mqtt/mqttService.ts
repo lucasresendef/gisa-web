@@ -51,6 +51,22 @@ class MqttService {
     this.emitConnection('disconnected');
   }
 
+  isConnected() {
+    return this.client?.connected ?? false;
+  }
+
+  reconnect() {
+    if (!this.client) {
+      this.connectMqtt();
+      return;
+    }
+
+    if (!this.client.connected) {
+      this.emitConnection('connecting');
+      this.client.reconnect();
+    }
+  }
+
   subscribeToDeviceStatus() {
     if (!this.client) return;
 

@@ -21,6 +21,11 @@ const accentByStatus: Record<VoiceFeedback['status'], string> = {
   error: 'from-rose-400 to-rose-500',
 };
 
+const requiresTapToStart =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches;
+
 export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps) => {
   const {
     transcript,
@@ -76,8 +81,12 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
       return;
     }
 
-    setPhase('listening');
-    SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
+    if (requiresTapToStart) {
+      setPhase('intro');
+    } else {
+      setPhase('listening');
+      SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
+    }
 
     return () => {
       SpeechRecognition.abortListening();
@@ -98,6 +107,12 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
   useEffect(() => {
     if (phase === 'listening' && finalTranscript) finish(finalTranscript);
   }, [phase, finalTranscript, finish]);
+
+  useEffect(() => {
+    if (phase === 'listening' && !listening && (finalTranscript || interimTranscript)) {
+      finish(finalTranscript || interimTranscript);
+    }
+  }, [phase, listening, finalTranscript, interimTranscript, finish]);
 
   const heard = interimTranscript || transcript;
   const accent = feedback ? accentByStatus[feedback.status] : 'from-brand-400 to-brand-600';
@@ -236,7 +251,7 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
                       Olá, eu sou a Gisa
                     </h2>
                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                      Toque no microfone e fale o que precisa.
+                      Toque no microfone, permita o acesso e fale o que precisa.
                     </p>
                   </>
                 )}

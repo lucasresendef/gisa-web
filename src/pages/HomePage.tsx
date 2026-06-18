@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Lightbulb, LightbulbOff, Mic, Power, Fence } from 'lucide-react';
+import { Lightbulb, LightbulbOff, Mic, Power, Fence, WifiOff } from 'lucide-react';
 import { devices, devicesByRoom, gatePassword, rooms } from '../config/homeConfig';
 import { DeviceCard } from '../features/devices/components/DeviceCard';
 import { RoomTabs } from '../features/rooms/components/RoomTabs';
@@ -43,6 +43,7 @@ const itemVariants = {
 
 export const HomePage = () => {
   const deviceStates = useHomeAutomationStore((state) => state.deviceStates);
+  const deviceOnline = useHomeAutomationStore((state) => state.deviceOnline);
   const toggleDevice = useHomeAutomationStore((state) => state.toggleDevice);
   const pulseGate = useHomeAutomationStore((state) => state.pulseGate);
   const { weather, status: weatherStatus } = useWeather();
@@ -52,7 +53,8 @@ export const HomePage = () => {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceMounted, setVoiceMounted] = useState(false);
 
-  const stateOf = (id: string): DeviceState => deviceStates[id] ?? 'offline';
+  const stateOf = (id: string): DeviceState =>
+    deviceOnline ? (deviceStates[id] ?? 'offline') : 'offline';
 
   const openGateDialog = (device: Device) => {
     setGateMounted(true);
@@ -92,10 +94,12 @@ export const HomePage = () => {
     const counts: Record<string, number> = {};
     for (const room of rooms) {
       const scope = room.id === 'all' ? devices : devicesByRoom(room.id);
-      counts[room.id] = scope.filter((d) => (deviceStates[d.id] ?? 'offline') === 'on').length;
+      counts[room.id] = deviceOnline
+        ? scope.filter((d) => (deviceStates[d.id] ?? 'offline') === 'on').length
+        : 0;
     }
     return counts;
-  }, [deviceStates]);
+  }, [deviceStates, deviceOnline]);
 
   const activeRoom = rooms.find((r) => r.id === activeRoomId) ?? rooms[0];
   const isAllRoom = activeRoom.id === 'all';
@@ -180,7 +184,12 @@ export const HomePage = () => {
     >
       {list.map((device) => (
         <motion.div key={device.id} variants={itemVariants}>
-          <DeviceCard device={device} state={stateOf(device.id)} onActivate={requestActivate} />
+          <DeviceCard
+            device={device}
+            state={stateOf(device.id)}
+            onActivate={requestActivate}
+            disabled={!deviceOnline}
+          />
         </motion.div>
       ))}
     </motion.div>
@@ -188,6 +197,24 @@ export const HomePage = () => {
 
   return (
     <div className="space-y-7">
+      <AnimatePresence>
+        {!deviceOnline && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            role="alert"
+            className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-200"
+          >
+            <WifiOff className="h-5 w-5 shrink-0" />
+            <span>
+              Dispositivo offline. Tentando reconectar automaticamente a
+              cada 30s. Os controles ficam desabilitados até a reconexão.
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <motion.section
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
@@ -215,7 +242,7 @@ export const HomePage = () => {
                     ? weather.phrase
                     : lightsOn.length > 0
                       ? `${lightsOn.length} ${lightsOn.length === 1 ? 'luz acesa' : 'luzes acesas'} no momento.`
-                      : 'Bem-vindo de volta — sua casa está pronta. 🏡'}
+                      : 'Bem-vindo de volta, sua casa está pronta. 🏡'}
                 </motion.p>
               </AnimatePresence>
             </div>
@@ -224,11 +251,12 @@ export const HomePage = () => {
           <div className="flex flex-col items-center gap-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             <motion.button
               type="button"
-              whileHover={{ y: -2 }}
-              whileTap={{ scale: 0.96 }}
+              disabled={!deviceOnline}
+              whileHover={deviceOnline ? { y: -2 } : undefined}
+              whileTap={deviceOnline ? { scale: 0.96 } : undefined}
               onPointerDown={() => void importVoiceAssistant()}
               onClick={openVoiceAssistant}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-400 to-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-soft transition"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-400 to-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-soft transition disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Mic className="h-4 w-4" />
               Falar com a Gisa
@@ -292,15 +320,17 @@ export const HomePage = () => {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              disabled={!deviceOnline}
               onClick={() => setAll(true)}
-              className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-600 transition hover:bg-brand-100 dark:border-white/10 dark:bg-white/[0.06] dark:text-brand-100 dark:hover:bg-white/10"
+              className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-600 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.06] dark:text-brand-100 dark:hover:bg-white/10"
             >
               Ligar tudo
             </button>
             <button
               type="button"
+              disabled={!deviceOnline}
               onClick={() => setAll(false)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06]"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06]"
             >
               Desligar tudo
             </button>
