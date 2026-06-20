@@ -11,6 +11,7 @@ const REQUIRED_ENV = [
   'VITE_MQTT_STATUS_TOPIC',
   'VITE_MQTT_SENSOR_TOPIC',
   'VITE_MQTT_DOOR_TOPIC',
+  'VITE_MQTT_TRAVEL_TOPIC',
 ] as const;
 
 const missing = REQUIRED_ENV.filter((key) => !env[key]);
@@ -43,4 +44,5 @@ export const mqttTopics: MqttTopics = {
   statusTopic: env.VITE_MQTT_STATUS_TOPIC,
   sensorTopic: env.VITE_MQTT_SENSOR_TOPIC,
   doorTopic: env.VITE_MQTT_DOOR_TOPIC,
+  travelTopic: env.VITE_MQTT_TRAVEL_TOPIC,
 };

@@ -7,6 +7,7 @@ export const rooms: Room[] = [
   { id: 'bedroom', name: 'Quartos', caption: 'Dormitórios e corredor', icon: 'bed' },
   { id: 'garage', name: 'Garagem', caption: 'Acesso de veículos', icon: 'car' },
   { id: 'all', name: 'Todos', caption: 'Todos os ambientes', icon: 'grid' },
+  { id: 'travel', name: 'Viagem', caption: 'Rotina visual para simular presença', icon: 'travel' },
 ];
 
 export const devices: Device[] = [
@@ -35,3 +36,11 @@ export const devicesByRoom = (roomId: string) =>
 export const gatePassword = '1134';
 
 export const initialSyncCommand = 'VA';
+
+export const travelRoutineSteps = [
+  { deviceId: 'R2', durationMs: 5 * 60_000, note: 'Garagem visivel da rua' },
+  { deviceId: 'R5', durationMs: 4 * 60_000, note: 'Sala principal em evidencia' },
+  { deviceId: 'R3', durationMs: 3 * 60_000, note: 'Corredor dos quartos com passagem simulada' },
+  { deviceId: 'R4', durationMs: 5 * 60_000, note: 'Quarto da Sara com permanencia mais longa' },
+  { deviceId: 'R7', durationMs: 3 * 60_000, note: 'Cozinha e corredor lateral ativos' },
+] as const;

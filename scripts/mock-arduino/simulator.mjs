@@ -34,10 +34,13 @@ const TOPICS = {
   status: env.VITE_MQTT_STATUS_TOPIC || 'rele/status',
   sensor: env.VITE_MQTT_SENSOR_TOPIC || 'rele/sensor',
   door: env.VITE_MQTT_DOOR_TOPIC || 'rele/door',
+  travel: env.VITE_MQTT_TRAVEL_TOPIC || 'rele/travel',
 };
 
 const BROKER_URL = process.env.SIM_MQTT_URL || `${PROTOCOL}://${HOST}:${PORT}${ENDPOINT}`;
 const SYNC_COMMAND = 'VA';
+const TRAVEL_ON_COMMAND = 'TV_ON';
+const TRAVEL_OFF_COMMAND = 'TV_OFF';
 const GATE_CLOSE_MS = Number(process.env.SIM_GATE_CLOSE || 6000);
 const DEMO_INTERVAL_MS = Number(process.env.SIM_DEMO_INTERVAL || 4000);
 const CYCLE_INTERVAL_MS = Number(process.env.SIM_CYCLE_INTERVAL || 3000);
@@ -48,10 +51,24 @@ const BEDROOM_LIGHTS = ['R1', 'R4', 'R6', 'R10', 'R3', 'R9'];
 
 const RELAYS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'R10'];
 const GATES = ['P1', 'P2', 'P3'];
+const TRAVEL_STEPS = [
+  { id: 'R2', durationMs: 5 * 60_000 },
+  { id: 'R5', durationMs: 4 * 60_000 },
+  { id: 'R3', durationMs: 3 * 60_000 },
+  { id: 'R4', durationMs: 5 * 60_000 },
+  { id: 'R7', durationMs: 3 * 60_000 },
+];
 
 const state = {};
 [...RELAYS, ...GATES].forEach((id) => (state[id] = false));
 const gateTimers = {};
+let travelMode = {
+  enabled: false,
+  index: 0,
+  startedAt: 0,
+  endsAt: 0,
+  timer: null,
+};
 
 const c = {
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
@@ -106,7 +123,21 @@ function handleCommand(command) {
     return;
   }
 
+  if (command.toUpperCase() === TRAVEL_ON_COMMAND) {
+    startTravelMode();
+    return;
+  }
+
+  if (command.toUpperCase() === TRAVEL_OFF_COMMAND) {
+    stopTravelMode(true);
+    return;
+  }
+
   if (RELAYS.includes(command)) {
+    if (travelMode.enabled) {
+      const activeId = TRAVEL_STEPS[travelMode.index]?.id;
+      stopTravelMode(activeId !== command);
+    }
     state[command] = !state[command];
     publish([command]);
     log(`◀ ${c.bold(command)} → ${state[command] ? c.green('LIGADO') : c.dim('desligado')}`);
@@ -148,6 +179,87 @@ function publish(ids) {
 
 function publishSnapshot() {
   publish([...RELAYS, ...GATES]);
+  publishTravelStatus();
+}
+
+function publishTravelStatus() {
+  const payload = travelMode.enabled
+    ? JSON.stringify({
+        enabled: true,
+        current: TRAVEL_STEPS[travelMode.index].id,
+        next: TRAVEL_STEPS[(travelMode.index + 1) % TRAVEL_STEPS.length].id,
+        remaining: Math.max(0, Math.ceil((travelMode.endsAt - Date.now()) / 1000)),
+        duration: Math.round(TRAVEL_STEPS[travelMode.index].durationMs / 1000),
+        index: travelMode.index,
+      })
+    : JSON.stringify({
+        enabled: false,
+        current: '',
+        next: '',
+        remaining: 0,
+        duration: 0,
+        index: 0,
+      });
+  client.publish(TOPICS.travel, payload, { qos: 0 });
+}
+
+function resetTravelLights() {
+  for (const { id } of TRAVEL_STEPS) {
+    if (!state[id]) continue;
+    state[id] = false;
+    publish([id]);
+  }
+}
+
+function activateTravelStep(index) {
+  travelMode.enabled = true;
+  travelMode.index = index % TRAVEL_STEPS.length;
+  travelMode.startedAt = Date.now();
+  travelMode.endsAt = travelMode.startedAt + TRAVEL_STEPS[travelMode.index].durationMs;
+
+  const currentId = TRAVEL_STEPS[travelMode.index].id;
+  state[currentId] = true;
+  publish([currentId]);
+  publishTravelStatus();
+  log(`✈ ${c.bold(currentId)} → ${c.green('LIGADO')} ${c.dim(`(${TRAVEL_STEPS[travelMode.index].durationMs / 60000} min)`)}`);
+
+  travelMode.timer = setTimeout(() => {
+    const previousId = TRAVEL_STEPS[travelMode.index].id;
+    state[previousId] = false;
+    publish([previousId]);
+    activateTravelStep((travelMode.index + 1) % TRAVEL_STEPS.length);
+  }, TRAVEL_STEPS[travelMode.index].durationMs);
+}
+
+function startTravelMode() {
+  if (travelMode.enabled) {
+    publishTravelStatus();
+    return;
+  }
+  resetTravelLights();
+  activateTravelStep(0);
+  log(c.yellow('✈ modo viagem ativado'));
+}
+
+function stopTravelMode(turnOffCurrent) {
+  if (travelMode.timer) clearTimeout(travelMode.timer);
+  travelMode.timer = null;
+
+  if (travelMode.enabled && turnOffCurrent) {
+    const currentId = TRAVEL_STEPS[travelMode.index].id;
+    state[currentId] = false;
+    publish([currentId]);
+  }
+
+  travelMode = {
+    enabled: false,
+    index: 0,
+    startedAt: 0,
+    endsAt: 0,
+    timer: null,
+  };
+  publishTravelStatus();
+  log(c.yellow('✈ modo viagem desativado'));
 }
 
 function startDemo() {
@@ -183,6 +295,7 @@ function startBedroomCycle() {
 function shutdown() {
   log(c.dim('encerrando…'));
   Object.values(gateTimers).forEach((t) => t && clearTimeout(t));
+  if (travelMode.timer) clearTimeout(travelMode.timer);
   client.end(true, () => process.exit(0));
   setTimeout(() => process.exit(0), 1000);
 }

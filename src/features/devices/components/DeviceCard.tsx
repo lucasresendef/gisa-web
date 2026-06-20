@@ -16,9 +16,18 @@ interface DeviceCardProps {
   state: DeviceState;
   onActivate: (device: Device) => void;
   disabled?: boolean;
+  travelManaged?: boolean;
+  travelCurrent?: boolean;
 }
 
-export const DeviceCard = ({ device, state, onActivate, disabled = false }: DeviceCardProps) => {
+export const DeviceCard = ({
+  device,
+  state,
+  onActivate,
+  disabled = false,
+  travelManaged = false,
+  travelCurrent = false,
+}: DeviceCardProps) => {
   const Icon = iconMap[device.icon];
   const isGate = device.kind === 'gate';
   const isOn = state === 'on';
@@ -80,6 +89,17 @@ export const DeviceCard = ({ device, state, onActivate, disabled = false }: Devi
             {isGate ? 'Toque para acionar' : `Canal ${device.command}`}
           </span>
         </div>
+        {travelManaged && (
+          <div
+            className={`mt-3 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+              travelCurrent
+                ? 'bg-sky-500 text-white'
+                : 'bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-100'
+            }`}
+          >
+            {travelCurrent ? 'Ativa no modo viagem' : 'Reservada ao modo viagem'}
+          </div>
+        )}
       </div>
     </motion.button>
   );

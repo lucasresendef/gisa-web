@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { BedDouble, CarFront, Fence, LayoutGrid, Sofa, Utensils } from 'lucide-react';
+import { BedDouble, CarFront, Fence, LayoutGrid, PlaneTakeoff, Sofa, Utensils } from 'lucide-react';
 import type { Room, RoomIcon } from '../../../types/device';
 
 const iconMap: Record<RoomIcon, typeof Sofa> = {
@@ -9,6 +9,7 @@ const iconMap: Record<RoomIcon, typeof Sofa> = {
   car: CarFront,
   gate: Fence,
   grid: LayoutGrid,
+  travel: PlaneTakeoff,
 };
 
 interface RoomTabsProps {

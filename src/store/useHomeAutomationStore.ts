@@ -2,7 +2,10 @@ import { create } from 'zustand';
 import { devices, initialSyncCommand } from '../config/homeConfig';
 import { mqttTopics } from '../services/mqtt/mqttConfig';
 import { mqttService } from '../services/mqtt/mqttService';
-import type { DeviceState, MqttConnectionStatus } from '../types/device';
+import type { DeviceState, MqttConnectionStatus, TravelModeStatus } from '../types/device';
+
+const TRAVEL_ON_COMMAND = 'TV_ON';
+const TRAVEL_OFF_COMMAND = 'TV_OFF';
 
 interface HomeAutomationState {
   mqttStatus: MqttConnectionStatus;
@@ -10,16 +13,26 @@ interface HomeAutomationState {
   syncReceived: boolean;
   deviceOnline: boolean;
   deviceStates: Record<string, DeviceState>;
+  travelMode: TravelModeStatus;
   connect: () => void;
   disconnect: () => void;
   toggleDevice: (command: string) => void;
   pulseGate: (command: string) => void;
+  startTravelMode: () => void;
+  stopTravelMode: () => void;
   sync: () => void;
 }
 
 const defaultDeviceStates = Object.fromEntries(
   devices.map((device) => [device.id, device.kind === 'gate' ? 'off' : 'loading']),
 ) as Record<string, DeviceState>;
+const defaultTravelMode: TravelModeStatus = {
+  enabled: false,
+  stepIndex: 0,
+  remainingSec: 0,
+  durationSec: 0,
+  updatedAt: 0,
+};
 
 let listenersBound = false;
 const gateTimers: Record<string, ReturnType<typeof setTimeout>> = {};
@@ -94,6 +107,7 @@ export const useHomeAutomationStore = create<HomeAutomationState>((set, get) => 
   syncReceived: false,
   deviceOnline: false,
   deviceStates: defaultDeviceStates,
+  travelMode: defaultTravelMode,
   connect: () => {
     if (!listenersBound) {
       mqttService.onConnection((status, error) => {
@@ -110,6 +124,25 @@ export const useHomeAutomationStore = create<HomeAutomationState>((set, get) => 
       mqttService.onDeviceStatus((topic, updates) => {
         clearSyncTimer();
         set((state) => {
+          if (topic === mqttTopics.travelTopic) {
+            const remainingSec = Number(updates.remaining ?? '0');
+            const durationSec = Number(updates.duration ?? '0');
+            const stepIndex = Number(updates.index ?? '0');
+            return {
+              travelMode: {
+                enabled: updates.enabled === 'true',
+                currentDeviceId: updates.current || undefined,
+                nextDeviceId: updates.next || undefined,
+                remainingSec: Number.isFinite(remainingSec) ? remainingSec : 0,
+                durationSec: Number.isFinite(durationSec) ? durationSec : 0,
+                stepIndex: Number.isFinite(stepIndex) ? stepIndex : 0,
+                updatedAt: Date.now(),
+              },
+              syncReceived: true,
+              deviceOnline: true,
+            };
+          }
+
           const next = { ...state.deviceStates };
           Object.entries(updates).forEach(([id, value]) => {
             const nextState = value === 'true' ? 'on' : 'off';
@@ -168,6 +201,14 @@ export const useHomeAutomationStore = create<HomeAutomationState>((set, get) => 
         deviceStates: { ...state.deviceStates, [command]: 'off' },
       }));
     }, GATE_OPEN_MS);
+  },
+  startTravelMode: () => {
+    if (!get().deviceOnline) return;
+    mqttService.publishCommand(TRAVEL_ON_COMMAND);
+  },
+  stopTravelMode: () => {
+    if (!get().deviceOnline) return;
+    mqttService.publishCommand(TRAVEL_OFF_COMMAND);
   },
   sync: () => {
     set({ syncReceived: false, deviceOnline: true });

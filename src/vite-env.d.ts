@@ -11,6 +11,7 @@ interface ImportMetaEnv {
   readonly VITE_MQTT_STATUS_TOPIC: string;
   readonly VITE_MQTT_SENSOR_TOPIC: string;
   readonly VITE_MQTT_DOOR_TOPIC: string;
+  readonly VITE_MQTT_TRAVEL_TOPIC: string;
 }
 
 interface ImportMeta {

@@ -2,20 +2,28 @@ import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { Check, Delete, Lock, ShieldCheck, X } from 'lucide-react';
-import type { Device } from '../../../types/device';
 
 type Status = 'idle' | 'error' | 'success';
 
 interface GatePasswordDialogProps {
-  gate: Device | null;
+  open: boolean;
+  title: string;
+  label: string;
   password: string;
   onCancel: () => void;
-  onConfirm: (gate: Device) => void;
+  onConfirm: () => void;
 }
 
 const keypad = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: GatePasswordDialogProps) => {
+export const GatePasswordDialog = ({
+  open,
+  title,
+  label,
+  password,
+  onCancel,
+  onConfirm,
+}: GatePasswordDialogProps) => {
   const [entry, setEntry] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const length = password.length;
@@ -23,22 +31,22 @@ export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: Gate
   useEffect(() => {
     setEntry('');
     setStatus('idle');
-  }, [gate]);
+  }, [open, label, title]);
 
   useEffect(() => {
-    if (!gate) return;
+    if (!open) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = previous;
     };
-  }, [gate]);
+  }, [open]);
 
   const validate = useCallback(
     (value: string) => {
       if (value === password) {
         setStatus('success');
-        window.setTimeout(() => gate && onConfirm(gate), 700);
+        window.setTimeout(() => onConfirm(), 700);
       } else {
         setStatus('error');
         window.setTimeout(() => {
@@ -47,7 +55,7 @@ export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: Gate
         }, 650);
       }
     },
-    [password, gate, onConfirm],
+    [password, onConfirm],
   );
 
   const press = useCallback(
@@ -69,7 +77,7 @@ export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: Gate
   }, [status]);
 
   useEffect(() => {
-    if (!gate) return;
+    if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onCancel();
       else if (event.key === 'Backspace') backspace();
@@ -77,7 +85,7 @@ export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: Gate
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [gate, onCancel, press, backspace]);
+  }, [open, onCancel, press, backspace]);
 
   const dotColor =
     status === 'error'
@@ -88,7 +96,7 @@ export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: Gate
 
   return createPortal(
     <AnimatePresence>
-      {gate && (
+      {open && (
         <motion.div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           initial={{ opacity: 0 }}
@@ -146,15 +154,15 @@ export const GatePasswordDialog = ({ gate, password, onCancel, onConfirm }: Gate
               </motion.span>
 
               <h2 className="mt-4 font-display text-lg font-bold text-slate-800 dark:text-white">
-                {status === 'success' ? 'Portão liberado' : 'Confirmar abertura'}
+                {status === 'success' ? 'Acesso liberado' : title}
               </h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                 {status === 'success' ? (
-                  <span className="font-semibold text-emerald-500">{gate.label}</span>
+                  <span className="font-semibold text-emerald-500">{label}</span>
                 ) : (
                   <>
                     Digite a senha para acionar{' '}
-                    <span className="font-semibold text-brand-600 dark:text-brand-200">{gate.label}</span>
+                    <span className="font-semibold text-brand-600 dark:text-brand-200">{label}</span>
                   </>
                 )}
               </p>

@@ -71,7 +71,7 @@ class MqttService {
   subscribeToDeviceStatus() {
     if (!this.client) return;
 
-    [mqttTopics.statusTopic, mqttTopics.sensorTopic, mqttTopics.doorTopic].forEach((topic) => {
+    [mqttTopics.statusTopic, mqttTopics.sensorTopic, mqttTopics.doorTopic, mqttTopics.travelTopic].forEach((topic) => {
       this.client?.subscribe(topic, { qos: 0 });
     });
   }

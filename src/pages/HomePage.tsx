@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Lightbulb, LightbulbOff, Mic, Power, Fence, WifiOff } from 'lucide-react';
-import { devices, devicesByRoom, gatePassword, rooms } from '../config/homeConfig';
+import { devices, devicesByRoom, gatePassword, rooms, travelRoutineSteps } from '../config/homeConfig';
 import { DeviceCard } from '../features/devices/components/DeviceCard';
 import { RoomTabs } from '../features/rooms/components/RoomTabs';
+import { TravelModePanel } from '../features/travel/components/TravelModePanel';
 import { WeatherChip } from '../features/weather/components/WeatherChip';
 import { useHomeAutomationStore } from '../store/useHomeAutomationStore';
 import { useWeather } from '../hooks/useWeather';
@@ -46,10 +47,15 @@ export const HomePage = () => {
   const deviceOnline = useHomeAutomationStore((state) => state.deviceOnline);
   const toggleDevice = useHomeAutomationStore((state) => state.toggleDevice);
   const pulseGate = useHomeAutomationStore((state) => state.pulseGate);
+  const travelMode = useHomeAutomationStore((state) => state.travelMode);
+  const startTravelMode = useHomeAutomationStore((state) => state.startTravelMode);
+  const stopTravelMode = useHomeAutomationStore((state) => state.stopTravelMode);
   const { weather, status: weatherStatus } = useWeather();
   const [activeRoomId, setActiveRoomId] = useState(rooms[0].id);
   const [pendingGate, setPendingGate] = useState<Device | null>(null);
   const [gateMounted, setGateMounted] = useState(false);
+  const [travelPromptOpen, setTravelPromptOpen] = useState(false);
+  const [travelNow, setTravelNow] = useState(Date.now());
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceMounted, setVoiceMounted] = useState(false);
 
@@ -73,6 +79,32 @@ export const HomePage = () => {
     return () => window.clearTimeout(id);
   }, []);
 
+  const travelSteps = useMemo(
+    () =>
+      travelRoutineSteps
+        .map((step) => {
+          const device = devices.find((item) => item.id === step.deviceId && item.kind === 'relay');
+          if (!device) return null;
+          return {
+            id: device.id,
+            command: device.command,
+            label: device.label,
+            note: step.note,
+            durationMs: step.durationMs,
+          };
+        })
+        .filter((step): step is NonNullable<typeof step> => step !== null),
+    [],
+  );
+
+  useEffect(() => {
+    if (!travelMode.enabled || !travelMode.updatedAt) return;
+    const interval = window.setInterval(() => {
+      setTravelNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [travelMode.enabled, travelMode.updatedAt]);
+
   const requestActivate = (device: Device) => {
     if (device.kind === 'gate') {
       openGateDialog(device);
@@ -93,17 +125,22 @@ export const HomePage = () => {
   const activeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const room of rooms) {
+      if (room.id === 'travel') {
+        counts[room.id] = travelMode.enabled ? 1 : 0;
+        continue;
+      }
       const scope = room.id === 'all' ? devices : devicesByRoom(room.id);
       counts[room.id] = deviceOnline
         ? scope.filter((d) => (deviceStates[d.id] ?? 'offline') === 'on').length
         : 0;
     }
     return counts;
-  }, [deviceStates, deviceOnline]);
+  }, [deviceStates, deviceOnline, travelMode.enabled]);
 
   const activeRoom = rooms.find((r) => r.id === activeRoomId) ?? rooms[0];
   const isAllRoom = activeRoom.id === 'all';
   const isGatesRoom = activeRoom.id === 'gates';
+  const isTravelRoom = activeRoom.id === 'travel';
   const roomDevices = isAllRoom ? devices : devicesByRoom(activeRoom.id);
 
   const setAll = (on: boolean, scope = roomDevices) => {
@@ -174,6 +211,17 @@ export const HomePage = () => {
     { label: 'Ligadas agora', value: lightsOn.length, icon: Power, accent: true },
     { label: 'Portões', value: gates.length, icon: Fence },
   ];
+  const travelRemainingMs = travelMode.enabled
+    ? Math.max(0, travelMode.remainingSec * 1000 - (travelNow - travelMode.updatedAt))
+    : 0;
+  const travelCycleMs = travelSteps.reduce((total, step) => total + step.durationMs, 0);
+  const travelCurrentStepIndex = travelMode.currentDeviceId
+    ? Math.max(
+        0,
+        travelSteps.findIndex((step) => step.id === travelMode.currentDeviceId),
+      )
+    : Math.max(0, travelMode.stepIndex);
+  const travelManagedIds = useMemo(() => new Set(travelSteps.map((step) => step.id)), [travelSteps]);
 
   const renderGrid = (list: Device[]) => (
     <motion.div
@@ -189,6 +237,8 @@ export const HomePage = () => {
             state={stateOf(device.id)}
             onActivate={requestActivate}
             disabled={!deviceOnline}
+            travelManaged={travelMode.enabled && travelManagedIds.has(device.id)}
+            travelCurrent={travelMode.enabled && travelMode.currentDeviceId === device.id}
           />
         </motion.div>
       ))}
@@ -316,7 +366,7 @@ export const HomePage = () => {
           <p className="text-sm text-slate-500 dark:text-slate-400">{activeRoom.caption}</p>
         </div>
 
-        {!isGatesRoom && (
+        {!isGatesRoom && !isTravelRoom && (
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -348,7 +398,7 @@ export const HomePage = () => {
         >
           {isAllRoom
             ? rooms
-                .filter((room) => room.id !== 'all')
+                .filter((room) => room.id !== 'all' && room.id !== 'travel')
                 .map((room) => {
                   const list = devicesByRoom(room.id);
                   if (!list.length) return null;
@@ -364,7 +414,20 @@ export const HomePage = () => {
                     </section>
                   );
                 })
-            : renderGrid(roomDevices)}
+            : isTravelRoom
+              ? (
+                <TravelModePanel
+                  active={travelMode.enabled}
+                  deviceOnline={deviceOnline}
+                  currentStepIndex={travelCurrentStepIndex}
+                  remainingMs={travelRemainingMs}
+                  cycleMs={travelCycleMs}
+                  steps={travelSteps}
+                  onStart={() => setTravelPromptOpen(true)}
+                  onStop={stopTravelMode}
+                />
+              )
+              : renderGrid(roomDevices)}
         </motion.div>
       </AnimatePresence>
 
@@ -381,13 +444,32 @@ export const HomePage = () => {
       {gateMounted && (
         <Suspense fallback={null}>
           <GatePasswordDialog
-            gate={pendingGate}
+            open={Boolean(pendingGate)}
+            title="Confirmar abertura"
+            label={pendingGate?.label ?? ''}
             password={gatePassword}
             onCancel={() => setPendingGate(null)}
-            onConfirm={confirmGate}
+            onConfirm={() => {
+              if (!pendingGate) return;
+              confirmGate(pendingGate);
+            }}
           />
         </Suspense>
       )}
+
+      <Suspense fallback={null}>
+        <GatePasswordDialog
+          open={travelPromptOpen}
+          title="Ativar modo viagem"
+          label="rotina de presenca simulada"
+          password={gatePassword}
+          onCancel={() => setTravelPromptOpen(false)}
+          onConfirm={() => {
+            setTravelPromptOpen(false);
+            startTravelMode();
+          }}
+        />
+      </Suspense>
     </div>
   );
 };

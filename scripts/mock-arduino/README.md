@@ -58,9 +58,10 @@ Lê o broker e os tópicos do `.env` do projeto (`VITE_MQTT_*`). Por padrão:
 
 | Direção            | Tópico        | Conteúdo                                      |
 | ------------------ | ------------- | --------------------------------------------- |
-| App → simulador    | `gisa/rele`   | Comando em texto: `R5`, `P1`, `VA`, …         |
+| App → simulador    | `gisa/rele`   | Comando em texto: `R5`, `P1`, `VA`, `TV_ON`…  |
 | Simulador → app    | `rele/status` | Relés: `{"R5": true}` (`true`=ligado)         |
 | Simulador → app    | `rele/door`   | Portões: `{"P1": true}` (`true`=aberto)       |
+| Simulador → app    | `rele/travel` | Rotina viagem: `{"enabled": true, ...}`       |
 
 O formato do payload é o que o app espera em
 [`src/utils/mqttParser.ts`](../../src/utils/mqttParser.ts). A lista de

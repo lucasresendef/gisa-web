@@ -27,7 +27,10 @@ const char *CLIENT_ID = "gisa-mega-eth";
 const char *TOPIC_CMD = "gisa/rele";
 const char *TOPIC_STATUS = "rele/status";
 const char *TOPIC_SENSOR = "rele/sensor";
+const char *TOPIC_TRAVEL = "rele/travel";
 const char *SYNC_CMD = "VA";
+const char *TRAVEL_ON_CMD = "TV_ON";
+const char *TRAVEL_OFF_CMD = "TV_OFF";
 
 const int RELAY_DATA_PIN = 4;
 const int RELAY_CLOCK_PIN = 5;
@@ -62,6 +65,17 @@ struct Gate {
   unsigned long offAt;
 };
 
+struct TravelStep {
+  uint8_t lightIndex;
+  unsigned long durationMs;
+};
+
+struct TravelMode {
+  bool enabled;
+  uint8_t currentStep;
+  unsigned long stepEndsAt;
+};
+
 Light lights[] = {
   { "R1", 1, 1, A1, -1 },
   { "R2", 2, 1, A2, -1 },
@@ -83,6 +97,17 @@ Gate gates[] = {
 
 const uint8_t LIGHT_COUNT = sizeof(lights) / sizeof(lights[0]);
 const uint8_t GATE_COUNT = sizeof(gates) / sizeof(gates[0]);
+
+TravelStep travelSteps[] = {
+  { 1, 5UL * 60UL * 1000UL },
+  { 4, 4UL * 60UL * 1000UL },
+  { 2, 3UL * 60UL * 1000UL },
+  { 3, 5UL * 60UL * 1000UL },
+  { 6, 3UL * 60UL * 1000UL },
+};
+
+const uint8_t TRAVEL_STEP_COUNT = sizeof(travelSteps) / sizeof(travelSteps[0]);
+TravelMode travelMode = { false, 0, 0 };
 
 unsigned long lastPoll = 0;
 unsigned long lastBeat = 0;
@@ -117,10 +142,13 @@ void publishState(const char *topic, const char *name, bool value) {
   LOGLN(ok ? F("ok") : F("FALHOU"));
 }
 
-void toggleLight(uint8_t i) {
+bool setLightState(uint8_t i, bool turnOn, bool publishRelayState) {
   Light &light = lights[i];
-  byte current = relays.GetState(light.relay, light.module);
-  bool turnOn = current == 0;
+  bool currentOn = relays.GetState(light.relay, light.module) != 0;
+  if (currentOn == turnOn) {
+    return false;
+  }
+
   relays.SetRelay(light.relay, turnOn ? SERIAL_RELAY_ON : SERIAL_RELAY_OFF, light.module);
   LOG(F("[LUZ] "));
   LOG(light.cmd);
@@ -128,11 +156,106 @@ void toggleLight(uint8_t i) {
   LOG(light.relay);
   LOG(F(" mod="));
   LOG(light.module);
-  LOG(F(" estadoAnterior="));
-  LOG(current);
   LOG(F(" -> "));
   LOGLN(turnOn ? F("LIGAR") : F("DESLIGAR"));
-  publishState(TOPIC_STATUS, light.cmd, turnOn);
+
+  if (publishRelayState) {
+    publishState(TOPIC_STATUS, light.cmd, turnOn);
+  }
+  return true;
+}
+
+void publishTravelStatus() {
+  char payload[112];
+  if (!travelMode.enabled) {
+    snprintf(payload, sizeof(payload), "{'enabled':'false','current':'','next':'','remaining':'0','duration':'0','index':'0'}");
+  } else {
+    const TravelStep &current = travelSteps[travelMode.currentStep];
+    const TravelStep &next = travelSteps[(travelMode.currentStep + 1) % TRAVEL_STEP_COUNT];
+    unsigned long remainingMs = (long)(travelMode.stepEndsAt - millis()) > 0 ? travelMode.stepEndsAt - millis() : 0;
+    unsigned long remainingSec = (remainingMs + 999UL) / 1000UL;
+    unsigned long durationSec = current.durationMs / 1000UL;
+
+    snprintf(
+      payload,
+      sizeof(payload),
+      "{'enabled':'true','current':'%s','next':'%s','remaining':'%lu','duration':'%lu','index':'%u'}",
+      lights[current.lightIndex].cmd,
+      lights[next.lightIndex].cmd,
+      remainingSec,
+      durationSec,
+      travelMode.currentStep
+    );
+  }
+
+  bool ok = client.publish(TOPIC_TRAVEL, payload);
+  LOG(F("[PUB] "));
+  LOG(TOPIC_TRAVEL);
+  LOG(F(" "));
+  LOG(payload);
+  LOG(F(" -> "));
+  LOGLN(ok ? F("ok") : F("FALHOU"));
+}
+
+void stopTravelMode(bool turnOffCurrentLight) {
+  if (!travelMode.enabled) {
+    publishTravelStatus();
+    return;
+  }
+
+  if (turnOffCurrentLight) {
+    setLightState(travelSteps[travelMode.currentStep].lightIndex, false, true);
+  }
+
+  travelMode.enabled = false;
+  travelMode.stepEndsAt = 0;
+  publishTravelStatus();
+}
+
+void activateTravelStep(uint8_t stepIndex) {
+  travelMode.enabled = true;
+  travelMode.currentStep = stepIndex % TRAVEL_STEP_COUNT;
+  const TravelStep &step = travelSteps[travelMode.currentStep];
+  setLightState(step.lightIndex, true, true);
+  travelMode.stepEndsAt = millis() + step.durationMs;
+  publishTravelStatus();
+}
+
+void startTravelMode() {
+  if (travelMode.enabled) {
+    publishTravelStatus();
+    return;
+  }
+
+  for (uint8_t i = 0; i < TRAVEL_STEP_COUNT; i++) {
+    setLightState(travelSteps[i].lightIndex, false, true);
+  }
+  activateTravelStep(0);
+}
+
+void serviceTravelMode() {
+  if (!travelMode.enabled) {
+    return;
+  }
+
+  if ((long)(millis() - travelMode.stepEndsAt) < 0) {
+    return;
+  }
+
+  uint8_t previousLight = travelSteps[travelMode.currentStep].lightIndex;
+  uint8_t nextStepIndex = (travelMode.currentStep + 1) % TRAVEL_STEP_COUNT;
+  uint8_t nextLight = travelSteps[nextStepIndex].lightIndex;
+
+  if (previousLight != nextLight) {
+    setLightState(previousLight, false, true);
+  }
+  activateTravelStep(nextStepIndex);
+}
+
+void toggleLight(uint8_t i) {
+  Light &light = lights[i];
+  bool currentOn = relays.GetState(light.relay, light.module) != 0;
+  setLightState(i, !currentOn, true);
 }
 
 void pulseGate(uint8_t i) {
@@ -190,10 +313,11 @@ void publishAll() {
     lights[i].lastSensor = reading;
     publishState(TOPIC_SENSOR, lights[i].cmd, reading == 1);
   }
+  publishTravelStatus();
 }
 
 void callback(char *topic, byte *payload, unsigned int length) {
-  char cmd[8];
+  char cmd[12];
   unsigned int n = length < sizeof(cmd) - 1 ? length : sizeof(cmd) - 1;
   for (unsigned int i = 0; i < n; i++) cmd[i] = (char)payload[i];
   cmd[n] = '\0';
@@ -215,8 +339,22 @@ void callback(char *topic, byte *payload, unsigned int length) {
     publishAll();
     return;
   }
+  if (strcmp(cmd, TRAVEL_ON_CMD) == 0) {
+    LOGLN(F("[CMD] ativar modo viagem"));
+    startTravelMode();
+    return;
+  }
+  if (strcmp(cmd, TRAVEL_OFF_CMD) == 0) {
+    LOGLN(F("[CMD] desativar modo viagem"));
+    stopTravelMode(true);
+    return;
+  }
   for (uint8_t i = 0; i < LIGHT_COUNT; i++) {
     if (strcmp(cmd, lights[i].cmd) == 0) {
+      if (travelMode.enabled) {
+        bool keepCurrentLight = travelSteps[travelMode.currentStep].lightIndex == i;
+        stopTravelMode(!keepCurrentLight);
+      }
       toggleLight(i);
       return;
     }
@@ -290,6 +428,7 @@ void loop() {
   }
   client.loop();
   serviceGatePulses();
+  serviceTravelMode();
 
   if (millis() - lastPoll >= POLL_MS) {
     lastPoll = millis();
