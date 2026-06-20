@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { devices, initialSyncCommand } from '../config/homeConfig';
+import { mqttTopics } from '../services/mqtt/mqttConfig';
 import { mqttService } from '../services/mqtt/mqttService';
 import type { DeviceState, MqttConnectionStatus } from '../types/device';
 
@@ -25,9 +26,12 @@ const gateTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 const GATE_OPEN_MS = 6000;
 const SYNC_TIMEOUT_MS = 10000;
 const RECONNECT_INTERVAL_MS = 30000;
+const SENSOR_SETTLE_MS = 3000;
 
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
 let reconnectTimer: ReturnType<typeof setInterval> | undefined;
+const relayHoldUntil: Record<string, number> = {};
+const relayHeldState: Record<string, 'on' | 'off'> = {};
 
 const clearSyncTimer = () => {
   if (syncTimer) {
@@ -73,6 +77,18 @@ const startReconnectLoop = (set: SetState, get: GetState) => {
   reconnectTimer = setInterval(() => attemptReconnect(set, get), RECONNECT_INTERVAL_MS);
 };
 
+const resolveHeldRelayState = (id: string, nextState: 'on' | 'off') => {
+  const holdUntil = relayHoldUntil[id] ?? 0;
+  if (holdUntil <= Date.now()) {
+    delete relayHoldUntil[id];
+    delete relayHeldState[id];
+    return nextState;
+  }
+
+  const heldState = relayHeldState[id];
+  return heldState && heldState !== nextState ? heldState : nextState;
+};
+
 export const useHomeAutomationStore = create<HomeAutomationState>((set, get) => ({
   mqttStatus: 'disconnected',
   syncReceived: false,
@@ -91,12 +107,17 @@ export const useHomeAutomationStore = create<HomeAutomationState>((set, get) => 
         }
       });
 
-      mqttService.onDeviceStatus((updates) => {
+      mqttService.onDeviceStatus((topic, updates) => {
         clearSyncTimer();
         set((state) => {
           const next = { ...state.deviceStates };
           Object.entries(updates).forEach(([id, value]) => {
-            next[id] = value === 'true' ? 'on' : 'off';
+            const nextState = value === 'true' ? 'on' : 'off';
+            if (topic === mqttTopics.doorTopic) {
+              next[id] = nextState;
+              return;
+            }
+            next[id] = resolveHeldRelayState(id, nextState);
           });
           return { deviceStates: next, syncReceived: true, deviceOnline: true };
         });
@@ -116,10 +137,15 @@ export const useHomeAutomationStore = create<HomeAutomationState>((set, get) => 
   toggleDevice: (command) => {
     if (!get().deviceOnline) return;
 
+    const current = get().deviceStates[command];
+    const nextState: 'on' | 'off' = current === 'on' ? 'off' : 'on';
+    relayHoldUntil[command] = Date.now() + SENSOR_SETTLE_MS;
+    relayHeldState[command] = nextState;
+
     set((state) => ({
       deviceStates: {
         ...state.deviceStates,
-        [command]: 'loading',
+        [command]: nextState,
       },
     }));
 

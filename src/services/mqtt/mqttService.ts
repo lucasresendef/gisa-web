@@ -3,7 +3,7 @@ import { mqttConnectionConfig, mqttTopics } from './mqttConfig';
 import { parseMqttPayload } from '../../utils/mqttParser';
 import type { MqttConnectionStatus } from '../../types/device';
 
-export type DeviceStatusListener = (status: Record<string, string>) => void;
+export type DeviceStatusListener = (topic: string, status: Record<string, string>) => void;
 export type ConnectionListener = (status: MqttConnectionStatus, error?: string) => void;
 
 class MqttService {
@@ -38,9 +38,10 @@ class MqttService {
     });
 
     this.client.on('message', (_topic, message) => {
+      const topic = _topic.toString();
       const parsed = parseMqttPayload(message.toString());
       if (Object.keys(parsed).length) {
-        this.listeners.forEach((listener) => listener(parsed));
+        this.listeners.forEach((listener) => listener(topic, parsed));
       }
     });
   }

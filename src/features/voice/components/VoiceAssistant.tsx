@@ -6,7 +6,7 @@ import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognitio
 import { exampleCommands, type VoiceFeedback } from '../../../config/voiceCommands';
 import { speak, stopSpeaking } from '../../../services/voice/speech';
 
-type Phase = 'intro' | 'listening' | 'processing' | 'result' | 'unsupported';
+type Phase = 'intro' | 'permission' | 'listening' | 'processing' | 'result' | 'unsupported';
 
 interface VoiceAssistantProps {
   open: boolean;
@@ -44,13 +44,43 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
   const secureContext = typeof window !== 'undefined' && window.isSecureContext;
   const supported = browserSupportsSpeechRecognition && secureContext;
 
-  const beginListening = useCallback(() => {
+  const beginListening = useCallback(async () => {
     setFeedback(null);
     processedRef.current = false;
     resetTranscript();
     stopSpeaking();
+    setPhase('permission');
+
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      } catch (error) {
+        const name = error instanceof DOMException ? error.name : '';
+        setFeedback({
+          status: 'error',
+          message:
+            name === 'NotAllowedError' || name === 'SecurityError'
+              ? 'O acesso ao microfone foi negado. Libere a permissão do site no navegador e tente de novo.'
+              : name === 'NotFoundError'
+                ? 'Nenhum microfone foi encontrado nesse dispositivo.'
+                : 'Nao foi possivel acessar o microfone. Verifique a permissao do navegador e tente de novo.',
+        });
+        setPhase('result');
+        return;
+      }
+    }
+
     setPhase('listening');
-    SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
+    try {
+      await SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
+    } catch {
+      setFeedback({
+        status: 'error',
+        message: 'Nao foi possivel iniciar o reconhecimento de voz nesse navegador.',
+      });
+      setPhase('result');
+    }
   }, [resetTranscript]);
 
   const finish = useCallback(
@@ -84,15 +114,14 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
     if (requiresTapToStart) {
       setPhase('intro');
     } else {
-      setPhase('listening');
-      SpeechRecognition.startListening({ language: 'pt-BR', continuous: false });
+      void beginListening();
     }
 
     return () => {
       SpeechRecognition.abortListening();
       stopSpeaking();
     };
-  }, [open, supported, resetTranscript]);
+  }, [open, supported, resetTranscript, beginListening]);
 
   useEffect(() => {
     if (open && supported && !isMicrophoneAvailable) {
@@ -236,6 +265,15 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
                     </h2>
                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">“{heard}”</p>
                   </>
+                ) : phase === 'permission' ? (
+                  <>
+                    <h2 className="font-display text-xl font-bold text-slate-800 dark:text-white">
+                      Liberando o microfone
+                    </h2>
+                    <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                      Confirme a permissao no navegador para continuar.
+                    </p>
+                  </>
                 ) : phase === 'listening' ? (
                   <>
                     <h2 className="font-display text-xl font-bold text-slate-800 dark:text-white">
@@ -274,7 +312,7 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
             {(phase === 'intro' || phase === 'result') && supported && (
               <button
                 type="button"
-                onClick={beginListening}
+                onClick={() => void beginListening()}
                 className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-brand-400 to-brand-600 px-5 py-3 text-sm font-semibold text-white shadow-soft transition active:scale-95"
               >
                 <Mic className="h-4 w-4" />
@@ -282,10 +320,22 @@ export const VoiceAssistant = ({ open, onClose, onProcess }: VoiceAssistantProps
               </button>
             )}
 
-            {phase === 'listening' && (
+            {(phase === 'permission' || phase === 'listening') && (
               <p className="mt-5 flex items-center justify-center gap-1.5 text-xs font-medium text-slate-400 dark:text-slate-500">
-                <span className={`h-2 w-2 rounded-full ${listening ? 'animate-pulse bg-rose-500' : 'bg-slate-300'}`} />
-                {listening ? 'Microfone ativo' : 'Microfone parado — toque para falar'}
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    phase === 'permission'
+                      ? 'animate-pulse bg-amber-400'
+                      : listening
+                        ? 'animate-pulse bg-rose-500'
+                        : 'bg-slate-300'
+                  }`}
+                />
+                {phase === 'permission'
+                  ? 'Aguardando permissao do microfone'
+                  : listening
+                    ? 'Microfone ativo'
+                    : 'Microfone parado — toque para falar'}
               </p>
             )}
           </motion.div>

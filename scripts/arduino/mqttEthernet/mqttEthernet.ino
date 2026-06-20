@@ -13,9 +13,9 @@
 #endif
 
 byte mac[] = { 0x70, 0xB3, 0xD5, 0x0A, 0xCC, 0xFB };
-IPAddress ip(192, 168, 1, 12);
-IPAddress dnsServer(192, 168, 1, 1);
-IPAddress gateway(192, 168, 1, 1);
+IPAddress ip(192, 168, 100, 57);
+IPAddress dnsServer(192, 168, 100, 1);
+IPAddress gateway(192, 168, 100, 1);
 IPAddress subnet(255, 255, 255, 0);
 
 const char *MQTT_BROKER = "broker.emqx.io";
@@ -34,8 +34,12 @@ const int RELAY_CLOCK_PIN = 5;
 const int RELAY_MODULES = 6;
 
 const int LIGHT_THRESHOLD = 150;
+const int LIGHT_HYSTERESIS = 15;
+const int LIGHT_THRESHOLD_ON = LIGHT_THRESHOLD + LIGHT_HYSTERESIS;
+const int LIGHT_THRESHOLD_OFF = LIGHT_THRESHOLD - LIGHT_HYSTERESIS;
 const unsigned long PULSE_MS = 600;
-const unsigned long POLL_MS = 120;
+// Leitura dos sensores em baixa frequência para evitar spam no MQTT.
+const unsigned long POLL_MS = 3000;
 const unsigned long HEARTBEAT_MS = 30000;
 
 SerialRelay relays(RELAY_DATA_PIN, RELAY_CLOCK_PIN, RELAY_MODULES);
@@ -87,6 +91,18 @@ int freeRam() {
   extern int __heap_start, *__brkval;
   int v;
   return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
+}
+
+int8_t resolveLightReading(const Light &light, int raw) {
+  if (light.lastSensor < 0) {
+    return raw >= LIGHT_THRESHOLD ? 1 : 0;
+  }
+
+  if (light.lastSensor == 1) {
+    return raw <= LIGHT_THRESHOLD_OFF ? 0 : 1;
+  }
+
+  return raw >= LIGHT_THRESHOLD_ON ? 1 : 0;
 }
 
 void publishState(const char *topic, const char *name, bool value) {
@@ -152,7 +168,7 @@ void pollLightSensors() {
   for (uint8_t i = 0; i < LIGHT_COUNT; i++) {
     Light &light = lights[i];
     int raw = analogRead(light.sensorPin);
-    int8_t reading = raw < LIGHT_THRESHOLD ? 0 : 1;
+    int8_t reading = resolveLightReading(light, raw);
     if (reading != light.lastSensor) {
       light.lastSensor = reading;
       LOG(F("[SENSOR] "));
@@ -169,9 +185,10 @@ void pollLightSensors() {
 void publishAll() {
   LOGLN(F("[SYNC] enviando estado de todas as luzes"));
   for (uint8_t i = 0; i < LIGHT_COUNT; i++) {
-    bool on = analogRead(lights[i].sensorPin) >= LIGHT_THRESHOLD;
-    lights[i].lastSensor = on ? 1 : 0;
-    publishState(TOPIC_SENSOR, lights[i].cmd, on);
+    int raw = analogRead(lights[i].sensorPin);
+    int8_t reading = resolveLightReading(lights[i], raw);
+    lights[i].lastSensor = reading;
+    publishState(TOPIC_SENSOR, lights[i].cmd, reading == 1);
   }
 }
 
