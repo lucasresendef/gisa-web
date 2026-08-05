@@ -35,7 +35,7 @@ const deviceAliases: AliasEntry[] = [
       'casal',
     ],
   },
-  { deviceId: 'R1', aliases: ['quarto do noah', 'quarto noah', 'luz do noah', 'noah', 'noa'] },
+  { deviceId: 'R1', aliases: ['escritorio', 'luz do escritorio', 'sala do escritorio', 'office'] },
   { deviceId: 'R4', aliases: ['quarto da sara', 'quarto sara', 'luz da sara', 'sara'] },
   {
     deviceId: 'R10',
@@ -56,7 +56,7 @@ const deviceAliases: AliasEntry[] = [
 
 export const exampleCommands = [
   'Ligar a luz da Sara',
-  'Apagar a luz do Noah',
+  'Apagar a luz do escritório',
   'Abrir o portão 1',
   'Desligar tudo',
 ];

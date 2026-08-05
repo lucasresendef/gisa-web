@@ -28,9 +28,14 @@ const greeting = () => {
   return 'Boa noite';
 };
 
-const MASCULINE_LABELS = ['quarto', 'corredor', 'portão', 'portao'];
+const MASCULINE_LABELS = ['quarto', 'corredor', 'portão', 'portao', 'escritório', 'escritorio'];
 const isMasculineLabel = (label: string) =>
   MASCULINE_LABELS.includes(label.toLowerCase().split(' ')[0]);
+
+const lightsOnView = {
+  name: 'Ligadas agora',
+  caption: 'Somente as luzes acesas neste momento',
+};
 
 const gridVariants = {
   hidden: { opacity: 0 },
@@ -52,6 +57,7 @@ export const HomePage = () => {
   const stopTravelMode = useHomeAutomationStore((state) => state.stopTravelMode);
   const { weather, status: weatherStatus } = useWeather();
   const [activeRoomId, setActiveRoomId] = useState(rooms[0].id);
+  const [onlyLightsOn, setOnlyLightsOn] = useState(false);
   const [pendingGate, setPendingGate] = useState<Device | null>(null);
   const [gateMounted, setGateMounted] = useState(false);
   const [travelPromptOpen, setTravelPromptOpen] = useState(false);
@@ -142,8 +148,19 @@ export const HomePage = () => {
   const isGatesRoom = activeRoom.id === 'gates';
   const isTravelRoom = activeRoom.id === 'travel';
   const roomDevices = isAllRoom ? devices : devicesByRoom(activeRoom.id);
+  const visibleDevices = onlyLightsOn ? lightsOn : roomDevices;
 
-  const setAll = (on: boolean, scope = roomDevices) => {
+  const selectRoom = (roomId: string) => {
+    setOnlyLightsOn(false);
+    setActiveRoomId(roomId);
+  };
+
+  const selectLightsOn = () => {
+    setActiveRoomId('all');
+    setOnlyLightsOn(true);
+  };
+
+  const setAll = (on: boolean, scope = visibleDevices) => {
     scope
       .filter((d) => d.kind === 'relay')
       .filter((d) => (on ? stateOf(d.id) === 'off' : stateOf(d.id) === 'on'))
@@ -207,9 +224,28 @@ export const HomePage = () => {
   };
 
   const stats = [
-    { label: 'Luzes', value: lights.length, icon: Lightbulb },
-    { label: 'Ligadas agora', value: lightsOn.length, icon: Power, accent: true },
-    { label: 'Portões', value: gates.length, icon: Fence },
+    {
+      label: 'Luzes',
+      value: lights.length,
+      icon: Lightbulb,
+      active: !onlyLightsOn && isAllRoom,
+      onSelect: () => selectRoom('all'),
+    },
+    {
+      label: 'Ligadas agora',
+      value: lightsOn.length,
+      icon: Power,
+      accent: true,
+      active: onlyLightsOn,
+      onSelect: selectLightsOn,
+    },
+    {
+      label: 'Portões',
+      value: gates.length,
+      icon: Fence,
+      active: !onlyLightsOn && isGatesRoom,
+      onSelect: () => selectRoom('gates'),
+    },
   ];
   const travelRemainingMs = travelMode.enabled
     ? Math.max(0, travelMode.remainingSec * 1000 - (travelNow - travelMode.updatedAt))
@@ -333,13 +369,18 @@ export const HomePage = () => {
 
         <div className="mt-6 grid grid-cols-3 gap-3">
           {stats.map((stat) => (
-            <div
+            <motion.button
               key={stat.label}
-              className={`rounded-2xl border p-3.5 sm:p-4 ${
+              type="button"
+              aria-pressed={stat.active}
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={stat.onSelect}
+              className={`rounded-2xl border p-3.5 text-left transition-colors sm:p-4 ${
                 stat.accent
-                  ? 'border-brand-300/60 bg-white/80 dark:border-brand-400/30 dark:bg-white/[0.06]'
-                  : 'border-white/70 bg-white/60 dark:border-white/10 dark:bg-white/[0.03]'
-              }`}
+                  ? 'border-brand-300/60 bg-white/80 hover:bg-white dark:border-brand-400/30 dark:bg-white/[0.06] dark:hover:bg-white/10'
+                  : 'border-white/70 bg-white/60 hover:bg-white/80 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]'
+              } ${stat.active ? 'ring-2 ring-brand-400/60 ring-offset-2 ring-offset-transparent' : ''}`}
             >
               <stat.icon
                 className={`mb-2 h-4 w-4 ${stat.accent ? 'text-brand-500' : 'text-slate-400 dark:text-slate-500'}`}
@@ -348,55 +389,88 @@ export const HomePage = () => {
                 {stat.value}
               </p>
               <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-400">{stat.label}</p>
-            </div>
+            </motion.button>
           ))}
         </div>
       </motion.section>
 
       <RoomTabs
         rooms={rooms}
-        activeRoomId={activeRoomId}
+        activeRoomId={onlyLightsOn ? '' : activeRoomId}
         activeCounts={activeCounts}
-        onSelect={setActiveRoomId}
+        onSelect={selectRoom}
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-display text-xl font-bold text-slate-800 dark:text-white">{activeRoom.name}</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">{activeRoom.caption}</p>
+          <h2 className="font-display text-xl font-bold text-slate-800 dark:text-white">
+            {onlyLightsOn ? lightsOnView.name : activeRoom.name}
+          </h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {onlyLightsOn ? lightsOnView.caption : activeRoom.caption}
+          </p>
         </div>
 
-        {!isGatesRoom && !isTravelRoom && (
+        {onlyLightsOn ? (
           <div className="flex items-center gap-2">
             <button
               type="button"
-              disabled={!deviceOnline}
-              onClick={() => setAll(true)}
-              className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-600 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.06] dark:text-brand-100 dark:hover:bg-white/10"
+              onClick={() => setOnlyLightsOn(false)}
+              className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-600 transition hover:bg-brand-100 dark:border-white/10 dark:bg-white/[0.06] dark:text-brand-100 dark:hover:bg-white/10"
             >
-              Ligar tudo
+              Limpar filtro
             </button>
             <button
               type="button"
-              disabled={!deviceOnline}
+              disabled={!deviceOnline || lightsOn.length === 0}
               onClick={() => setAll(false)}
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06]"
             >
               Desligar tudo
             </button>
           </div>
+        ) : (
+          !isGatesRoom &&
+          !isTravelRoom && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!deviceOnline}
+                onClick={() => setAll(true)}
+                className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-600 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.06] dark:text-brand-100 dark:hover:bg-white/10"
+              >
+                Ligar tudo
+              </button>
+              <button
+                type="button"
+                disabled={!deviceOnline}
+                onClick={() => setAll(false)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:bg-white/[0.06]"
+              >
+                Desligar tudo
+              </button>
+            </div>
+          )
         )}
       </div>
 
       <AnimatePresence mode="wait">
         <motion.div
-          key={activeRoom.id}
+          key={onlyLightsOn ? 'lights-on' : activeRoom.id}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 8 }}
-          className={isAllRoom ? 'space-y-8' : undefined}
+          className={!onlyLightsOn && isAllRoom ? 'space-y-8' : undefined}
         >
-          {isAllRoom
+          {onlyLightsOn ? (
+            lightsOn.length > 0 ? (
+              renderGrid(lightsOn)
+            ) : (
+              <div className="rounded-3xl border border-dashed border-slate-200 bg-white/60 p-8 text-center text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
+                Nenhuma luz ligada no momento.
+              </div>
+            )
+          ) : isAllRoom
             ? rooms
                 .filter((room) => room.id !== 'all' && room.id !== 'travel')
                 .map((room) => {
