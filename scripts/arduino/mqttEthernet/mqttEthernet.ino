@@ -1,9 +1,10 @@
+#define DEBUG 1
+
 #include <SPI.h>
 #include <Ethernet.h>
 #include <PubSubClient.h>
 #include <SerialRelay.h>
 
-#define DEBUG 1
 #if DEBUG
 #define LOG(x) Serial.print(x)
 #define LOGLN(x) Serial.println(x)
@@ -13,10 +14,25 @@
 #endif
 
 byte mac[] = { 0x70, 0xB3, 0xD5, 0x0A, 0xCC, 0xFB };
-IPAddress ip(192, 168, 100, 57);
-IPAddress dnsServer(192, 168, 100, 1);
-IPAddress gateway(192, 168, 100, 1);
+IPAddress staticIp(192, 168, 24, 57);
+IPAddress dnsServer(192, 168, 24, 1);
+IPAddress gateway(192, 168, 24, 1);
 IPAddress subnet(255, 255, 255, 0);
+
+const bool PREFER_DHCP = true;
+const unsigned long DHCP_TIMEOUT_MS = 6000;
+const unsigned long DHCP_RESPONSE_TIMEOUT_MS = 2000;
+const unsigned long DHCP_RETRY_MS = 300000UL;
+const unsigned long LINK_CHECK_MS = 1000;
+const unsigned long NET_RETRY_MIN_MS = 3000;
+const unsigned long NET_RETRY_MAX_MS = 60000UL;
+const unsigned long MQTT_RETRY_MIN_MS = 2000;
+const unsigned long MQTT_RETRY_MAX_MS = 60000UL;
+const uint8_t MQTT_FAILS_BEFORE_NET_RESET = 5;
+const uint16_t MQTT_SOCKET_TIMEOUT_S = 4;
+const uint16_t MQTT_KEEPALIVE_S = 20;
+const uint16_t ETH_RETRANSMISSION_MS = 200;
+const uint8_t ETH_RETRANSMISSION_COUNT = 3;
 
 const char *MQTT_BROKER = "broker.emqx.io";
 const int MQTT_PORT = 1883;
@@ -41,7 +57,6 @@ const int LIGHT_HYSTERESIS = 15;
 const int LIGHT_THRESHOLD_ON = LIGHT_THRESHOLD + LIGHT_HYSTERESIS;
 const int LIGHT_THRESHOLD_OFF = LIGHT_THRESHOLD - LIGHT_HYSTERESIS;
 const unsigned long PULSE_MS = 600;
-// Leitura dos sensores em baixa frequência para evitar spam no MQTT.
 const unsigned long POLL_MS = 3000;
 const unsigned long HEARTBEAT_MS = 30000;
 
@@ -112,10 +127,239 @@ TravelMode travelMode = { false, 0, 0 };
 unsigned long lastPoll = 0;
 unsigned long lastBeat = 0;
 
+bool netConfigured = false;
+bool usingStaticIp = false;
+bool linkUp = true;
+bool hardwareMissing = false;
+bool ethernetStarted = false;
+bool clearMqttPacingOnUp = true;
+unsigned long lastLinkCheck = 0;
+unsigned long netNextAttemptAt = 0;
+unsigned long netBackoffMs = NET_RETRY_MIN_MS;
+unsigned long dhcpRetryAt = 0;
+unsigned long mqttNextAttemptAt = 0;
+unsigned long mqttBackoffMs = MQTT_RETRY_MIN_MS;
+uint8_t mqttFailStreak = 0;
+uint16_t netResetCount = 0;
+uint16_t mqttConnectCount = 0;
+
 int freeRam() {
   extern int __heap_start, *__brkval;
   int v;
   return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
+}
+
+unsigned long growBackoff(unsigned long current, unsigned long limit) {
+  unsigned long next = current * 2;
+  return next > limit ? limit : next;
+}
+
+bool sameSubnet(const IPAddress &a, const IPAddress &b, const IPAddress &mask) {
+  for (uint8_t i = 0; i < 4; i++) {
+    if ((a[i] & mask[i]) != (b[i] & mask[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool hasUsableIp() {
+  IPAddress current = Ethernet.localIP();
+  if (current[0] == 0) {
+    return false;
+  }
+  if (current[0] == 169 && current[1] == 254) {
+    return false;
+  }
+  return true;
+}
+
+bool anyGatePulsing() {
+  for (uint8_t i = 0; i < GATE_COUNT; i++) {
+    if (gates[i].pulsing) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void validateStaticConfig() {
+  LOG(F("[NET] plano estatico ip="));
+  LOG(staticIp);
+  LOG(F(" gw="));
+  LOG(gateway);
+  LOG(F(" mask="));
+  LOG(subnet);
+  LOG(F(" dns="));
+  LOGLN(dnsServer);
+
+  if (!sameSubnet(staticIp, gateway, subnet)) {
+    LOGLN(F("[NET] ERRO: ip estatico fora da sub-rede do gateway"));
+  }
+  if (staticIp == gateway) {
+    LOGLN(F("[NET] ERRO: ip estatico igual ao gateway"));
+  }
+  if (staticIp[3] == 0 || staticIp[3] == 255) {
+    LOGLN(F("[NET] ERRO: ip estatico usa endereco de rede ou broadcast"));
+  }
+}
+
+void reportAddress() {
+  IPAddress current = Ethernet.localIP();
+  LOG(F("[NET] ip="));
+  LOG(current);
+  LOG(F(" gw="));
+  LOG(Ethernet.gatewayIP());
+  LOG(F(" dns="));
+  LOG(Ethernet.dnsServerIP());
+  LOG(F(" modo="));
+  LOGLN(usingStaticIp ? F("estatico") : F("dhcp"));
+
+  if (!sameSubnet(current, gateway, subnet)) {
+    LOGLN(F("[NET] AVISO: ip obtido fora da sub-rede esperada"));
+  }
+}
+
+void dropMqtt() {
+  if (client.connected()) {
+    client.disconnect();
+  }
+  ethernet.stop();
+}
+
+void applyStaticIp() {
+  Ethernet.begin(mac, staticIp, dnsServer, gateway, subnet);
+  usingStaticIp = true;
+  dhcpRetryAt = millis() + DHCP_RETRY_MS;
+}
+
+bool bringNetworkUp() {
+  dropMqtt();
+
+  bool gotLease = false;
+  if (PREFER_DHCP) {
+    LOGLN(F("[NET] solicitando DHCP"));
+    gotLease = Ethernet.begin(mac, DHCP_TIMEOUT_MS, DHCP_RESPONSE_TIMEOUT_MS) != 0;
+  }
+
+  if (gotLease) {
+    usingStaticIp = false;
+    LOGLN(F("[NET] DHCP ok"));
+  } else {
+    if (PREFER_DHCP) {
+      LOGLN(F("[NET] DHCP indisponivel, aplicando ip estatico"));
+    }
+    applyStaticIp();
+  }
+
+  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+    if (!hardwareMissing) {
+      hardwareMissing = true;
+      LOGLN(F("[NET] shield Ethernet nao detectado"));
+    }
+    return false;
+  }
+
+  if (hardwareMissing) {
+    hardwareMissing = false;
+    LOGLN(F("[NET] shield Ethernet detectado"));
+  }
+
+  ethernetStarted = true;
+  Ethernet.setRetransmissionTimeout(ETH_RETRANSMISSION_MS);
+  Ethernet.setRetransmissionCount(ETH_RETRANSMISSION_COUNT);
+
+  if (!hasUsableIp()) {
+    LOGLN(F("[NET] endereco invalido apos configuracao"));
+    return false;
+  }
+
+  reportAddress();
+  return true;
+}
+
+void requestNetworkRestart(bool resetMqttPacing) {
+  netConfigured = false;
+  netNextAttemptAt = millis();
+  netBackoffMs = NET_RETRY_MIN_MS;
+  clearMqttPacingOnUp = resetMqttPacing;
+}
+
+void serviceDhcpLease() {
+  if (usingStaticIp) {
+    if ((long)(millis() - dhcpRetryAt) >= 0) {
+      dhcpRetryAt = millis() + DHCP_RETRY_MS;
+      if (!client.connected()) {
+        LOGLN(F("[NET] tentando recuperar DHCP"));
+        requestNetworkRestart(false);
+      }
+    }
+    return;
+  }
+
+  int result = Ethernet.maintain();
+  if (result == 1 || result == 3) {
+    LOG(F("[NET] lease DHCP perdido, codigo="));
+    LOGLN(result);
+    dropMqtt();
+    requestNetworkRestart(true);
+  } else if (result == 2 || result == 4) {
+    LOG(F("[NET] lease DHCP renovado, codigo="));
+    LOGLN(result);
+    reportAddress();
+  }
+}
+
+void serviceNetwork() {
+  if (ethernetStarted && millis() - lastLinkCheck >= LINK_CHECK_MS) {
+    lastLinkCheck = millis();
+    bool nowUp = Ethernet.linkStatus() != LinkOFF;
+    if (nowUp != linkUp) {
+      linkUp = nowUp;
+      if (linkUp) {
+        LOGLN(F("[NET] cabo conectado"));
+        requestNetworkRestart(true);
+      } else {
+        LOGLN(F("[NET] cabo desconectado"));
+        netConfigured = false;
+        dropMqtt();
+      }
+    }
+  }
+
+  if (!linkUp) {
+    return;
+  }
+
+  if (netConfigured) {
+    serviceDhcpLease();
+    return;
+  }
+
+  if ((long)(millis() - netNextAttemptAt) < 0) {
+    return;
+  }
+  if (anyGatePulsing()) {
+    return;
+  }
+
+  if (bringNetworkUp()) {
+    netConfigured = true;
+    netBackoffMs = NET_RETRY_MIN_MS;
+    if (clearMqttPacingOnUp) {
+      mqttBackoffMs = MQTT_RETRY_MIN_MS;
+      mqttFailStreak = 0;
+      mqttNextAttemptAt = millis();
+    } else {
+      mqttNextAttemptAt = millis() + mqttBackoffMs;
+    }
+  } else {
+    netNextAttemptAt = millis() + netBackoffMs;
+    LOG(F("[NET] nova tentativa em "));
+    LOG(netBackoffMs / 1000);
+    LOGLN(F("s"));
+    netBackoffMs = growBackoff(netBackoffMs, NET_RETRY_MAX_MS);
+  }
 }
 
 int8_t resolveLightReading(const Light &light, int raw) {
@@ -131,6 +375,10 @@ int8_t resolveLightReading(const Light &light, int raw) {
 }
 
 void publishState(const char *topic, const char *name, bool value) {
+  if (!client.connected()) {
+    return;
+  }
+
   char payload[28];
   snprintf(payload, sizeof(payload), "{'%s': '%s'}", name, value ? "true" : "false");
   bool ok = client.publish(topic, payload);
@@ -166,13 +414,18 @@ bool setLightState(uint8_t i, bool turnOn, bool publishRelayState) {
 }
 
 void publishTravelStatus() {
+  if (!client.connected()) {
+    return;
+  }
+
   char payload[112];
   if (!travelMode.enabled) {
     snprintf(payload, sizeof(payload), "{'enabled':'false','current':'','next':'','remaining':'0','duration':'0','index':'0'}");
   } else {
     const TravelStep &current = travelSteps[travelMode.currentStep];
     const TravelStep &next = travelSteps[(travelMode.currentStep + 1) % TRAVEL_STEP_COUNT];
-    unsigned long remainingMs = (long)(travelMode.stepEndsAt - millis()) > 0 ? travelMode.stepEndsAt - millis() : 0;
+    long remainingSigned = (long)(travelMode.stepEndsAt - millis());
+    unsigned long remainingMs = remainingSigned > 0 ? (unsigned long)remainingSigned : 0;
     unsigned long remainingSec = (remainingMs + 999UL) / 1000UL;
     unsigned long durationSec = current.durationMs / 1000UL;
 
@@ -369,23 +622,57 @@ void callback(char *topic, byte *payload, unsigned int length) {
   LOGLN(cmd);
 }
 
-void reconnect() {
-  while (!client.connected()) {
-    LOG(F("[MQTT] conectando em "));
-    LOG(MQTT_BROKER);
-    LOG(F(":"));
-    LOGLN(MQTT_PORT);
-    if (client.connect(CLIENT_ID, MQTT_USER, MQTT_PASS)) {
-      LOGLN(F("[MQTT] conectado"));
-      client.subscribe(TOPIC_CMD);
-      LOG(F("[MQTT] inscrito em "));
-      LOGLN(TOPIC_CMD);
-      publishAll();
-    } else {
-      LOG(F("[MQTT] falhou, state="));
-      LOGLN(client.state());
-      delay(2000);
-    }
+void serviceMqtt() {
+  if (client.connected()) {
+    client.loop();
+    return;
+  }
+
+  if (!netConfigured || !linkUp) {
+    return;
+  }
+  if ((long)(millis() - mqttNextAttemptAt) < 0) {
+    return;
+  }
+  if (anyGatePulsing()) {
+    return;
+  }
+
+  LOG(F("[MQTT] conectando em "));
+  LOG(MQTT_BROKER);
+  LOG(F(":"));
+  LOGLN(MQTT_PORT);
+
+  if (client.connect(CLIENT_ID, MQTT_USER, MQTT_PASS)) {
+    mqttFailStreak = 0;
+    mqttBackoffMs = MQTT_RETRY_MIN_MS;
+    mqttConnectCount++;
+    LOGLN(F("[MQTT] conectado"));
+    client.subscribe(TOPIC_CMD);
+    LOG(F("[MQTT] inscrito em "));
+    LOGLN(TOPIC_CMD);
+    publishAll();
+    return;
+  }
+
+  mqttFailStreak++;
+  LOG(F("[MQTT] falhou, state="));
+  LOG(client.state());
+  LOG(F(" tentativa="));
+  LOG(mqttFailStreak);
+  LOG(F(" proxima em "));
+  LOG(mqttBackoffMs / 1000);
+  LOGLN(F("s"));
+
+  mqttNextAttemptAt = millis() + mqttBackoffMs;
+  mqttBackoffMs = growBackoff(mqttBackoffMs, MQTT_RETRY_MAX_MS);
+
+  if (mqttFailStreak >= MQTT_FAILS_BEFORE_NET_RESET) {
+    mqttFailStreak = 0;
+    netResetCount++;
+    LOGLN(F("[NET] falhas seguidas no MQTT, reinicializando a rede"));
+    dropMqtt();
+    requestNetworkRestart(false);
   }
 }
 
@@ -393,26 +680,23 @@ void setup() {
   Serial.begin(9600);
   LOGLN(F("=== Gisa Mega MQTT iniciando ==="));
 
-  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-    LOGLN(F("[NET] AVISO: shield Ethernet nao detectado"));
-  }
+  delay(250);
 
-  if (Ethernet.begin(mac) == 0) {
-    LOGLN(F("[NET] DHCP falhou, usando IP estatico"));
-    Ethernet.begin(mac, ip, dnsServer, gateway, subnet);
-  } else {
-    LOGLN(F("[NET] DHCP ok"));
-  }
-
-  if (Ethernet.linkStatus() == LinkOFF) {
-    LOGLN(F("[NET] AVISO: cabo de rede desconectado"));
-  }
-
-  LOG(F("[NET] IP: "));
-  LOGLN(Ethernet.localIP());
+  validateStaticConfig();
 
   client.setServer(MQTT_BROKER, MQTT_PORT);
   client.setCallback(callback);
+  client.setKeepAlive(MQTT_KEEPALIVE_S);
+  client.setSocketTimeout(MQTT_SOCKET_TIMEOUT_S);
+
+  linkUp = true;
+  ethernetStarted = false;
+  netConfigured = false;
+  netNextAttemptAt = millis();
+  netBackoffMs = NET_RETRY_MIN_MS;
+  mqttNextAttemptAt = millis();
+  mqttBackoffMs = MQTT_RETRY_MIN_MS;
+  clearMqttPacingOnUp = true;
 
   LOG(F("[BOOT] luzes="));
   LOG(LIGHT_COUNT);
@@ -423,10 +707,9 @@ void setup() {
 }
 
 void loop() {
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
+  serviceGatePulses();
+  serviceNetwork();
+  serviceMqtt();
   serviceGatePulses();
   serviceTravelMode();
 
@@ -437,10 +720,20 @@ void loop() {
 
   if (millis() - lastBeat >= HEARTBEAT_MS) {
     lastBeat = millis();
-    LOG(F("[HB] ativo ip="));
+    LOG(F("[HB] up="));
+    LOG(millis() / 1000);
+    LOG(F("s cabo="));
+    LOG(linkUp ? F("on") : F("off"));
+    LOG(F(" ip="));
     LOG(Ethernet.localIP());
+    LOG(F(" modo="));
+    LOG(usingStaticIp ? F("estatico") : F("dhcp"));
     LOG(F(" mqtt="));
     LOG(client.connected() ? F("on") : F("off"));
+    LOG(F(" conexoes="));
+    LOG(mqttConnectCount);
+    LOG(F(" resets="));
+    LOG(netResetCount);
     LOG(F(" freeRam="));
     LOGLN(freeRam());
   }
